@@ -93,7 +93,7 @@ SegmentTermsEnumFrame::SegmentTermsEnumFrame(UseOnlyPtr<uint8_t> _frame_code,
       suffix_length_if_all_equals_vint(),
       suffix_length_if_all_equals_vlong(),
       compression_algorithm_type(),
-      not_suffix_length_all_equals(),
+      all_equal(),
       is_leaf_block(),
       is_term_entry(),
       term_block_order(),
@@ -136,7 +136,7 @@ SegmentTermsEnumFrame::SegmentTermsEnumFrame(int64_t _block_fp,
       suffix_length_if_all_equals_vint(),
       suffix_length_if_all_equals_vlong(),
       compression_algorithm_type(),
-      not_suffix_length_all_equals(),
+      all_equal(),
       is_leaf_block(),
       is_term_entry(),
       term_block_order(),
@@ -243,9 +243,8 @@ void SegmentTermsEnumFrame::load_block() {
   //
   const uint32_t suffix_lengths_code = terms_in.read_vint();
   const int32_t num_suffix_length_bytes = suffix_lengths_code >> 1U;
-  const bool all_equal = (suffix_lengths_code & 0x01U);
+  all_equal = (suffix_lengths_code & 0x01U);
   if (all_equal) {
-    not_suffix_length_all_equals = false;
     const uint8_t length_first_byte = terms_in.read_byte();
     const uint8_t temp_bytes[9] = {length_first_byte, length_first_byte, length_first_byte,
                                    length_first_byte, length_first_byte, length_first_byte,
@@ -255,7 +254,6 @@ void SegmentTermsEnumFrame::load_block() {
     temp_bytes_ptr = &temp_bytes[0];
     suffix_length_if_all_equals_vlong = DataDecoding::read_vlong(temp_bytes_ptr);
   } else {
-    not_suffix_length_all_equals = true;
     suffix_lengths_input = DataInput<ReadOnlyDataInput>{
         ReadOnlyDataInput{
             terms_in.input.data,
@@ -331,8 +329,8 @@ TermsEnum::SeekStatus SegmentTermsEnumFrame::scan_to_term_leaf(const std::string
 
   do {
     ++next_ent;
-    suffix_length = (not_suffix_length_all_equals) ?
-                    suffix_lengths_input.read_vint() : suffix_length_if_all_equals_vint;
+    suffix_length = all_equal ?
+                    suffix_length_if_all_equals_vint : suffix_lengths_input.read_vint();
     suffix = std::string_view{(char *) curr_suffix_bytes, (uint64_t) suffix_length};
     curr_suffix_bytes += suffix_length;
 
@@ -394,8 +392,8 @@ TermsEnum::SeekStatus SegmentTermsEnumFrame::scan_to_term_non_leaf(const std::st
   // Loop over each entry (term or sub-block) in this block:
   while (next_ent < num_entries) {
     ++next_ent;
-    const uint32_t suffix_length_code = (not_suffix_length_all_equals) ?
-                                        suffix_lengths_input.read_vint() : suffix_length_if_all_equals_vint;
+    const uint32_t suffix_length_code = all_equal ?
+                                        suffix_length_if_all_equals_vint : suffix_lengths_input.read_vint();
     is_term_entry = (suffix_length_code & 1U) == 0;
     suffix_length = suffix_length_code >> 1U;
 
@@ -417,7 +415,7 @@ TermsEnum::SeekStatus SegmentTermsEnumFrame::scan_to_term_non_leaf(const std::st
       }  // End if
     } else {
       // exhaust sub block fp
-      if (not_suffix_length_all_equals) {
+      if (!all_equal) {
         suffix_lengths_input.read_vlong();
       }
       curr_suffix_bytes += suffix_length;
@@ -454,8 +452,8 @@ bool SegmentTermsEnumFrame::next_entry() {
 void SegmentTermsEnumFrame::next_leaf() {
   ++next_ent;
   ++term_block_order;
-  suffix_length = (not_suffix_length_all_equals) ?
-                  suffix_lengths_input.read_vint() : suffix_length_if_all_equals_vint;
+  suffix_length = all_equal ?
+                  suffix_length_if_all_equals_vint : suffix_lengths_input.read_vint();
   suffix = std::string_view((char *) suffix_bytes_start, (uint64_t) suffix_length);
   suffix_bytes_start += suffix_length;
 }
@@ -474,16 +472,16 @@ bool SegmentTermsEnumFrame::next_non_leaf() {
     }
 
     ++next_ent;
-    const uint32_t code = (not_suffix_length_all_equals) ?
-                          suffix_lengths_input.read_vint() : suffix_length_if_all_equals_vint;
+    const uint32_t code = all_equal ?
+                          suffix_length_if_all_equals_vint : suffix_lengths_input.read_vint();
     suffix_length = code >> 1U;
     suffix = std::string_view((char *) suffix_bytes_start, (uint64_t) suffix_length);
     suffix_bytes_start += suffix_length;
 
     if (code & 1U) {
       // A sub-block; make sub-FP absolute:
-      const uint64_t file_pointer_delta = (not_suffix_length_all_equals) ?
-                                          suffix_lengths_input.read_vlong() : suffix_length_if_all_equals_vlong;
+      const uint64_t file_pointer_delta = all_equal ?
+                                          suffix_length_if_all_equals_vlong : suffix_lengths_input.read_vlong();
       sub_block_fp = block_fp - file_pointer_delta;
       return true;
     } else {

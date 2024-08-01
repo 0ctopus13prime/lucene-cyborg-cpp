@@ -113,7 +113,7 @@ struct SegmentTermsEnumFrame {
   uint32_t suffix_length_if_all_equals_vint;
   uint32_t suffix_length_if_all_equals_vlong;
   CompressionAlgorithmType compression_algorithm_type;
-  bool not_suffix_length_all_equals;
+  bool all_equal;
   bool is_leaf_block;
 
   //
